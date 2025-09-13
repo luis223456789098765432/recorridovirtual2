@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Recorrido Virtual — Panolens (Debug)</title>
+  <link rel="preconnect" href="https://unpkg.com">
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Arial; background:#0b0d10; color:#e6edf3; }
+    .app { display: grid; grid-template-columns: 300px 1fr; height: 100vh; }
+    .sidebar { background: #11161c; border-right: 1px solid #1f2630; padding: 14px; overflow-y: auto; }
+    .header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+    .title { font-size: 16px; font-weight: 700; letter-spacing:.2px; }
+    .hint { font-size: 12px; color:#9db1c9; }
+    .scene-list { display: grid; gap: 10px; }
+    .scene { display:flex; align-items:center; gap:10px; padding:10px; border:1px solid #263143; border-radius:12px; cursor:pointer; background:#0f141a; transition: transform .05s ease, border-color .2s ease; }
+    .scene:hover { transform: translateY(-1px); border-color:#3b82f6; }
+    .scene.active { border-color:#60a5fa; background:#111827; }
+    .thumb { width: 48px; height: 48px; border-radius:10px; object-fit: cover; background:#0b0d10; border:1px solid #1f2630; }
+    .scene-meta { display:flex; flex-direction:column; line-height:1.1; }
+    .scene-title { font-weight:600; font-size:14px; }
+    .scene-sub { font-size:12px; color:#9db1c9; }
+    .viewer-wrap { position: relative; }
+    #viewer { width: 100%; height: 100vh; background: #000; }
+    .controls { position:absolute; right:14px; bottom:14px; display:flex; gap:8px; flex-wrap: wrap; }
+    .btn { border:1px solid #263143; background:#121a23; color:#e6edf3; padding:10px 12px; border-radius:12px; font-size:13px; cursor:pointer; }
+    .btn:hover { border-color:#3b82f6; }
+    .badge { display:inline-block; padding:2px 8px; font-size:11px; border:1px solid #2a3446; border-radius:999px; color:#9db1c9; }
+    .topbar { position:absolute; left:14px; top:14px; display:flex; gap:8px; align-items:center; z-index:10; }
+    .panel-toggle { display:none; }
+    @media (max-width: 900px) {
+      .app { grid-template-columns: 1fr; }
+      .sidebar { display:none; position:absolute; z-index:20; width: 86vw; max-width: 420px; height: 100vh; }
+      .panel-toggle { display:inline-block; }
+    }
+    .toast {
+      position: absolute; top: 14px; right: 14px;
+      background: #121a23; border:1px solid #263143; padding:10px 12px; border-radius: 10px; font-size:12px; color:#9db1c9;
+      max-width: 380px;
+    }
+    .errors { font-size: 12px; background:#0f141a; border:1px solid #2a3446; padding:10px; border-radius:10px; color:#ffb4b4; margin-top:10px;}
+    .kbd { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; background:#0f141a; border:1px solid #2a3446; border-radius:6px; padding:1px 6px; font-size: 12px; }
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="header">
+      <div>
+        <div class="title">Recorrido Virtual</div>
+        <div class="hint">Haz clic en una escena para navegar</div>
+      </div>
+      <button class="btn panel-toggle" id="hidePanelBtn">Ocultar</button>
+    </div>
+    <div class="scene-list" id="sceneList"></div>
+    <p class="hint" style="margin-top:12px;">Sugerencia: usa imágenes 360° equirectangulares (relación 2:1, p. ej. 8000×4000).</p>
+    <p class="hint"><span class="badge">Editar</span> Abre <strong>index.html</strong> y ajusta el bloque <em>TOUR_CONFIG</em>.</p>
+    <div class="errors" id="errors" style="display:none;"></div>
+  </aside>
+
+  <main class="viewer-wrap">
+    <div class="topbar">
+      <button class="btn panel-toggle" id="showPanelBtn" title="Mostrar panel">Panel</button>
+      <span class="badge" id="sceneBadge">—</span>
+    </div>
+    <div id="viewer"></div>
+    <div class="controls">
+      <button class="btn" id="prevBtn">◀ Anterior</button>
+      <button class="btn" id="nextBtn">Siguiente ▶</button>
+      <button class="btn" id="autorotateBtn">⟲ Auto</button>
+      <button class="btn" id="fullscreenBtn">⛶</button>
+      <button class="btn" id="importBtn">Importar imágenes…</button>
+      <input type="file" id="fileInput" accept="image/*" multiple style="display:none" />
+    </div>
+    <div class="toast" id="toast" style="display:none;"></div>
+  </main>
+</div>
+
+<!-- Three.js + Panolens via CDN -->
+<script src="https://unpkg.com/three@0.105.2/build/three.min.js"></script>
+<script src="https://unpkg.com/panolens@0.12.0/build/panolens.min.js"></script>
+
+<!-- ======= CONFIGURACIÓN EDITABLE ======= -->
+<script>
+  const TOUR_CONFIG = {
+    initialSceneId: "italia",
+    autorotate: false,
+    scenes: [
+      {
+        id: "italia",
+        title: "Italia — Valles y Cumbres",
+        subtitle: "Panorama 360°",
+        src: "images/vecteezy_majestic-peaks-and-serene-valleys-a-360-view-of-the-italian_20803205.jpg",
+        hfov: 110,
+        hotspots: [
+          { target: "tbilisi", yaw: 25, pitch: -3, text: "Ir a Tbilisi — Sameba" }
+        ],
+        info: "Paisaje italiano en 360°. Ajusta este texto si deseas más detalles."
+      },
+
+
+      {
+        id: "italia",
+        title: "Suiza — Valle de Alpes",
+        subtitle: "Panorama 360°",
+        src: "images/vecteezy_ai-generated-swiss-alps-mountain-range-with-lush-forest_38999389.jpg",
+        hfov: 110,
+        hotspots: [
+          { target: "tbilisi", yaw: 25, pitch: -3, text: "Ir a Tbilisi — Sameba" }
+        ],
+        info: "Paisaje italiano en 360°. Ajusta este texto si deseas más detalles."
+      },
+
+      {
+        id: "Universo",
+        title: "Espacio — Valle de Alpes",
+        subtitle: "Panorama 360°",
+        src: "images/vecteezy_3d-render-of-a-spherical-panorama-360-degrees-angle-view-of_23183527.jpg",
+        hfov: 110,
+        hotspots: [
+          { target: "tbilisi", yaw: 25, pitch: -3, text: "Ir a Tbilisi — Sameba" }
+        ],
+        info: "Paisaje italiano en 360°. Ajusta este texto si deseas más detalles."
+      },
+
+
+      {
+        id: "tbilisi",
+        title: "Tbilisi — Catedral Sameba",
+        subtitle: "Panorama 360°",
+        src: "images/vecteezy_tbilisi-sameba-cathedral-360_19828880.jpg",
+        hfov: 110,
+        hotspots: [
+          { target: "italia", yaw: -140, pitch: -4, text: "Volver a Italia" }
+        ],
+        info: "Vista 360° de la Catedral de la Santísima Trinidad (Sameba), Tbilisi."
+      }
+    ]
+  };
+</script>
+
+<!-- ======= LÓGICA DEL RECORRIDO (con diagnóstico) ======= -->
+<script>
+  const errorsEl = document.getElementById('errors');
+  function reportError(msg){
+    errorsEl.style.display = 'block';
+    const p = document.createElement('div');
+    p.textContent = msg;
+    errorsEl.appendChild(p);
+    console.warn(msg);
+  }
+
+  function showToast(msg, ms=2000) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.style.display = 'block';
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.style.display = 'none', ms);
+  }
+
+  // Pre-chequeo: validar que los archivos existan (mediante Image())
+  async function precheckImages() {
+    const checks = TOUR_CONFIG.scenes.map(s => new Promise(resolve => {
+      const img = new Image();
+      img.onload = () => resolve({src:s.src, ok:true});
+      img.onerror = () => resolve({src:s.src, ok:false});
+      img.src = s.src + '?cache=' + Date.now();
+    }));
+    const results = await Promise.all(checks);
+    const missing = results.filter(r => !r.ok);
+    if (missing.length){
+      reportError('No se pudieron cargar estas rutas de imagen:');
+      missing.forEach(m => reportError('• ' + m.src));
+      reportError('Verifica que los archivos estén en la carpeta ' + location.pathname.replace(/\/[^/]*$/, '') + 'images/ y que el nombre coincida EXACTO (incluida la extensión).');
+      reportError('Sugerencia: abre este proyecto con un servidor local. Ejemplo: ');
+      reportError('   > ' + 'python -m http.server 8000' + '  y visita  http://localhost:8000');
+    }
+    return missing.length === 0;
+  }
+
+  // Viewer
+  const viewer = new PANOLENS.Viewer({
+    container: document.querySelector('#viewer'),
+    controlBar: true,
+    cameraFov: 75,
+    autoHideInfospot: false,
+    output: 'console'
+  });
+
+  const sceneMap = new Map();
+  let sceneOrder = [];
+  let currentIndex = 0;
+  let autorotating = false;
+
+  function vectorFromYawPitch(yawDeg, pitchDeg, radius=5000) {
+    const yaw = yawDeg * Math.PI / 180;
+    const pitch = pitchDeg * Math.PI / 180;
+    const phi = (Math.PI / 2) - pitch;
+    const x = radius * Math.sin(phi) * Math.sin(yaw);
+    const y = radius * Math.cos(phi);
+    const z = radius * Math.sin(phi) * Math.cos(yaw);
+    return new THREE.Vector3(x, y, z);
+  }
+
+  function buildScenes() {
+    sceneMap.clear(); sceneOrder = [];
+    TOUR_CONFIG.scenes.forEach((s, i) => {
+      const pano = new PANOLENS.ImagePanorama(s.src);
+      pano.addEventListener('enter-fade-start', () => {
+        document.getElementById('sceneBadge').textContent = s.title || s.id;
+        document.querySelectorAll('.scene').forEach(el => el.classList.toggle('active', el.dataset.id === s.id));
+      });
+      pano.addEventListener('error', (e) => {
+        reportError('Error al cargar: ' + s.src);
+      });
+      if (s.info) {
+        const info = new PANOLENS.Infospot(250, PANOLENS.DataImage.Info);
+        info.position.set(0, -2000, -4500);
+        info.addHoverText(s.info, 80);
+        pano.add(info);
+      }
+      if (Array.isArray(s.hotspots)) {
+        s.hotspots.forEach(h => {
+          const pos = vectorFromYawPitch(h.yaw || 0, h.pitch || 0);
+          const spot = new PANOLENS.Infospot(350, PANOLENS.DataImage.Arrow);
+          spot.position.copy(pos);
+          if (h.text) spot.addHoverText(h.text, 60);
+          if (!pano._pendingLinks) pano._pendingLinks = [];
+          pano._pendingLinks.push({ targetId: h.target, position: pos });
+          pano.add(spot);
+        });
+      }
+      viewer.add(pano);
+      sceneMap.set(s.id, { pano, meta: s });
+      sceneOrder.push(s.id);
+    });
+
+    // Enlaces
+    TOUR_CONFIG.scenes.forEach(s => {
+      const { pano } = sceneMap.get(s.id);
+      if (Array.isArray(pano._pendingLinks)) {
+        pano._pendingLinks.forEach(({ targetId, position }) => {
+          const target = sceneMap.get(targetId);
+          if (target) pano.link(target.pano, position);
+        });
+      }
+    });
+  }
+
+  function buildSidebar() {
+    const list = document.getElementById('sceneList');
+    list.innerHTML = '';
+    TOUR_CONFIG.scenes.forEach(s => {
+      const item = document.createElement('div');
+      item.className = 'scene';
+      item.dataset.id = s.id;
+item.innerHTML = `
+  <img class="thumb" src="${s.src}" alt="${s.title || s.id}" onerror="this.style.opacity=0.2" />
+  <div class="scene-meta">
+    <span class="scene-title">${s.title || s.id}</span>
+    <span class="scene-sub">${s.subtitle || ''}</span>
+  </div>
+`;
+
+      item.addEventListener('click', () => goToSceneById(s.id));
+      list.appendChild(item);
+    });
+  }
+
+  function goToSceneById(id) {
+    const idx = sceneOrder.indexOf(id);
+    if (idx >= 0) {
+      currentIndex = idx;
+      const entry = sceneMap.get(id);
+      if (entry) {
+        if (entry.meta.hfov) {
+          viewer.camera.fov = entry.meta.hfov;
+          viewer.camera.updateProjectionMatrix();
+        }
+        viewer.setPanorama(entry.pano);
+      }
+    }
+  }
+  function goNext(){ currentIndex = (currentIndex + 1) % sceneOrder.length; goToSceneById(sceneOrder[currentIndex]); }
+  function goPrev(){ currentIndex = (currentIndex - 1 + sceneOrder.length) % sceneOrder.length; goToSceneById(sceneOrder[currentIndex]); }
+  function toggleAutorotate(){
+    autorotating = !autorotating;
+    viewer.OrbitControls.autoRotate = autorotating;
+    viewer.OrbitControls.autoRotateSpeed = 0.5;
+    showToast(autorotating ? "Auto-rotación activada" : "Auto-rotación desactivada");
+  }
+  function toggleFullscreen(){
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else document.exitFullscreen();
+  }
+
+  // Panel responsive
+  const sidebar = document.getElementById('sidebar');
+  document.getElementById('showPanelBtn').addEventListener('click', () => { sidebar.style.display = 'block'; });
+  document.getElementById('hidePanelBtn').addEventListener('click', () => { sidebar.style.display = 'none'; });
+
+  // Controles
+  document.getElementById('nextBtn').addEventListener('click', goNext);
+  document.getElementById('prevBtn').addEventListener('click', goPrev);
+  document.getElementById('autorotateBtn').addEventListener('click', toggleAutorotate);
+  document.getElementById('fullscreenBtn').addEventListener('click', toggleFullscreen);
+
+  // Importar imágenes: empareja archivos por NOMBRE con lo declarado en TOUR_CONFIG
+  const fileInput = document.getElementById('fileInput');
+  document.getElementById('importBtn').addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    const files = Array.from(fileInput.files || []);
+    if (!files.length) return;
+    let matched = 0;
+    files.forEach(f => {
+      const match = TOUR_CONFIG.scenes.find(s => s.src.toLowerCase().endsWith('/' + f.name.toLowerCase()));
+      const url = URL.createObjectURL(f);
+      if (match){
+        match.src = url; matched++;
+      }
+    });
+    if (matched){
+      showToast('Imágenes emparejadas: ' + matched + '. Reconstruyendo escenas…');
+      // Rebuild everything with object URLs
+      buildSidebar();
+      // Remove previous panoramas from viewer (simple full refresh)
+      viewer.scene.children = viewer.scene.children.filter(x => !x.isPanorama);
+      buildScenes();
+      goToSceneById(TOUR_CONFIG.initialSceneId || TOUR_CONFIG.scenes[0].id);
+    } else {
+      showToast('No hubo coincidencias por nombre. Asegúrate de que los archivos tengan los nombres declarados en TOUR_CONFIG.');
+    }
+  });
+
+  // Inicializa con diagnóstico
+  (async () => {
+    await precheckImages();
+    buildScenes();
+    buildSidebar();
+    goToSceneById(TOUR_CONFIG.initialSceneId || TOUR_CONFIG.scenes[0].id);
+  })();
+</script>
+
+</body>
+</html>
